@@ -43,52 +43,71 @@ export default function LobbyPage(): ReactElement {
   // Local debounce guard (server also enforces)
   const [lastChangeAt, setLastChangeAt] = useState<number>(0);
 
-  const fetchLobby = useCallback(async (): Promise<void> => {
-    const res = await fetch(`/api/lobbies/${lobbyId}`);
-    const data = await res.json();
-    if (res.status === 410) {
-      setError("This lobby has expired. Please create a new one.");
-      return;
-    }
-    if (!res.ok) {
-      setError(data.error || "Failed to fetch lobby");
-    } else {
-      setLobby(data.lobby as Lobby);
-    }
-  }, [lobbyId]);
+  // WebSocket connection
+  const wsRef = useMemo<{ current: WebSocket | null }>(
+    () => ({ current: null }),
+    [],
+  );
+  const [connected, setConnected] = useState<boolean>(false);
 
-  // Ensure we are in the lobby (idempotent join)
-  const ensureJoined = useCallback(async (): Promise<void> => {
-    await fetch(`/api/lobbies/${lobbyId}/join`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ player: { id: playerId, name } }),
+  const connectWs = useCallback((): void => {
+    const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${protocol}//${window.location.host}/api/ws`;
+    const ws = new WebSocket(url);
+    wsRef.current = ws;
+    ws.addEventListener("open", () => {
+      setConnected(true);
+      // send join
+      ws.send(
+        JSON.stringify({
+          type: "join",
+          lobbyId,
+          player: { id: playerId, name },
+        }),
+      );
     });
-  }, [lobbyId, playerId, name]);
+    ws.addEventListener("message", (ev) => {
+      try {
+        const msg = JSON.parse(String(ev.data));
+        if (msg.type === "lobby") {
+          setLobby(msg.lobby as Lobby);
+        } else if (msg.type === "joined") {
+          setLobby(msg.lobby as Lobby);
+        } else if (msg.type === "error") {
+          setError(String(msg.error));
+        }
+      } catch {}
+    });
+    ws.addEventListener("close", () => {
+      setConnected(false);
+    });
+    ws.addEventListener("error", (ev) => {
+      setConnected(false);
+      try {
+        // Some environments may not provide detailed error events
+        setError("WebSocket error: connection issue");
+      } catch {}
+    });
+  }, [lobbyId, playerId, name, wsRef]);
 
   useEffect(() => {
     if (!lobbyId || !playerId) return;
-    (async () => {
-      await ensureJoined();
-      await fetchLobby();
-    })();
-    const poll = setInterval(fetchLobby, 3000);
-    const heartbeat = setInterval(async () => {
-      try {
-        await fetch(`/api/lobbies/${lobbyId}/heartbeat`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ playerId }),
-        });
-      } catch {
-        // ignore
+    connectWs();
+    const hb = setInterval(() => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "heartbeat" }));
       }
     }, 10_000);
     return () => {
-      clearInterval(poll);
-      clearInterval(heartbeat);
+      clearInterval(hb);
+      if (wsRef.current) {
+        try {
+          wsRef.current.close();
+        } catch {}
+        wsRef.current = null;
+      }
     };
-  }, [lobbyId, playerId, ensureJoined, fetchLobby]);
+  }, [lobbyId, playerId, connectWs, wsRef]);
 
   function occupantName(id?: string): string {
     if (!id || !lobby) return "Empty";
@@ -115,18 +134,17 @@ export default function LobbyPage(): ReactElement {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(`/api/lobbies/${lobbyId}/role`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ playerId, selection: sel }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Failed to change role");
-      } else {
-        setLobby(data.lobby as Lobby);
-        setLastChangeAt(now);
+      // Send role change over WebSocket
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        setError("Not connected");
+        return;
       }
+      wsRef.current.send(
+        JSON.stringify({ type: "role", selection: sel }),
+      );
+      setLastChangeAt(now);
+      // Server will broadcast updated lobby; nothing to await here
+      return;
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -142,9 +160,22 @@ export default function LobbyPage(): ReactElement {
             <h1 className="text-xl font-semibold">Lobby</h1>
             <p className="text-sm text-neutral-400 break-all">{lobbyId}</p>
           </div>
-          <div className="text-sm text-neutral-400">
-            Signed in as{" "}
-            <span className="text-neutral-200 font-medium">{name}</span>
+          <div className="flex items-center gap-4 text-sm text-neutral-400">
+            <div className="flex items-center gap-2">
+              <span
+                className={
+                  "inline-block h-2 w-2 rounded-full " +
+                  (connected ? "bg-green-500" : "bg-red-500")
+                }
+                aria-hidden
+              />
+              <span className={connected ? "text-green-400" : "text-red-400"}>
+                {connected ? "Connected" : "Disconnected"}
+              </span>
+            </div>
+            <div>
+              Signed in as <span className="text-neutral-200 font-medium">{name}</span>
+            </div>
           </div>
         </header>
 
