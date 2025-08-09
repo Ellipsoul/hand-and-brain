@@ -1,20 +1,19 @@
 import { getRedis } from "@/lib/redis";
 import { z } from "zod";
-import type { Lobby, Player } from "@/lib/types";
+import type { Lobby } from "@/lib/types";
 
 export const runtime = "nodejs";
 
-const JoinSchema = z.object({ player: z.object({ id: z.string(), name: z.string() }) });
+const HeartbeatSchema = z.object({ playerId: z.string() });
 
 export async function POST(
   req: Request,
   context: { params: Promise<{ lobbyId: string }> } | unknown,
 ) {
-  const { lobbyId } = await (context as { params: Promise<{ lobbyId: string }> })
-    .params;
+  const { lobbyId } = await (context as { params: Promise<{ lobbyId: string }> }).params;
   try {
     const json = await req.json();
-    const parsed = JoinSchema.parse(json);
+    const parsed = HeartbeatSchema.parse(json);
 
     const key = `lobby:${lobbyId}`;
     const redis = await getRedis();
@@ -33,17 +32,12 @@ export async function POST(
       });
     }
 
-    const exists = lobby.players.some((p) => p.id === parsed.player.id);
     const now = Date.now();
     lobby.lastSeen = lobby.lastSeen || {};
-    lobby.lastSeen[parsed.player.id] = now;
-    if (!exists) {
-      const newPlayer: Player = { ...parsed.player, isObserver: true };
-      lobby.players.push(newPlayer);
-    }
+    lobby.lastSeen[parsed.playerId] = now;
     await redis.set(key, JSON.stringify(lobby));
 
-    return new Response(JSON.stringify({ lobby }), {
+    return new Response(JSON.stringify({ ok: true, at: now }), {
       headers: { "content-type": "application/json" },
       status: 200,
     });

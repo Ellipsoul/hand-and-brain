@@ -6,20 +6,30 @@ export const runtime = "nodejs";
 
 const ReadySchema = z.object({ playerId: z.string(), ready: z.boolean() });
 
-export async function POST(req: Request, context: unknown) {
-  const { params } = (context || {}) as { params: { lobbyId: string } };
+export async function POST(
+  req: Request,
+  context: { params: Promise<{ lobbyId: string }> } | unknown,
+) {
+  const { lobbyId } = await (context as { params: Promise<{ lobbyId: string }> })
+    .params;
   try {
     const json = await req.json();
     const parsed = ReadySchema.parse(json);
 
-    const key = `lobby:${params.lobbyId}`;
+    const key = `lobby:${lobbyId}`;
     const redis = await getRedis();
     const str = await redis.get(key);
     const lobby = str ? (JSON.parse(str) as Lobby) : null;
     if (!lobby) {
-      return new Response(JSON.stringify({ error: "Lobby not found" }), {
+      return new Response(JSON.stringify({ error: "Lobby expired or not found" }), {
         headers: { "content-type": "application/json" },
         status: 404,
+      });
+    }
+    if (Date.now() > lobby.expiresAt) {
+      return new Response(JSON.stringify({ error: "Lobby expired" }), {
+        headers: { "content-type": "application/json" },
+        status: 410,
       });
     }
 

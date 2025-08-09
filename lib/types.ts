@@ -41,6 +41,8 @@ export interface Lobby {
   id: string;
   /** Creation time in milliseconds since epoch. */
   createdAt: number;
+  /** Absolute expiry time in ms since epoch when lobby becomes inactive. */
+  expiresAt: number;
   /** Players currently in lobby. */
   players: Player[];
   /** Player ids who toggled ready. When 4 are ready -> create a game. */
@@ -49,6 +51,8 @@ export interface Lobby {
   roles: LobbyRoles;
   /** Last role change timestamp per player (ms since epoch) for debounce. */
   lastRoleChangeAt: Record<string, number>;
+  /** Presence heartbeat timestamps (ms since epoch) by player id. */
+  lastSeen: Record<string, number>;
   /** Base time (per side) in seconds. */
   baseTimeSeconds: number;
   /** Increment added after a move (per side) in seconds. */

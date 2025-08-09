@@ -24,19 +24,23 @@ export async function POST(req: Request) {
       isObserver: true,
     };
 
+    const now = Date.now();
     const lobby: Lobby = {
       id: lobbyId,
-      createdAt: Date.now(),
+      createdAt: now,
+      expiresAt: now + 60 * 60 * 1000, // 1 hour
       players: [creator],
       readyPlayerIds: [],
       roles: {},
       lastRoleChangeAt: {},
+      lastSeen: { [creator.id]: now },
       baseTimeSeconds: parsed.baseTimeSeconds,
       incrementSeconds: parsed.incrementSeconds,
     };
 
     const redis = await getRedis();
-    await redis.set(lobbyKey, JSON.stringify(lobby));
+    // Persist with TTL (1 hour)
+    await redis.set(lobbyKey, JSON.stringify(lobby), { EX: 60 * 60 });
 
     return new Response(JSON.stringify({ lobby }), {
       headers: { "content-type": "application/json" },

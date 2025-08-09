@@ -46,6 +46,10 @@ export default function LobbyPage(): ReactElement {
   const fetchLobby = useCallback(async (): Promise<void> => {
     const res = await fetch(`/api/lobbies/${lobbyId}`);
     const data = await res.json();
+    if (res.status === 410) {
+      setError("This lobby has expired. Please create a new one.");
+      return;
+    }
     if (!res.ok) {
       setError(data.error || "Failed to fetch lobby");
     } else {
@@ -68,8 +72,22 @@ export default function LobbyPage(): ReactElement {
       await ensureJoined();
       await fetchLobby();
     })();
-    const t = setInterval(fetchLobby, 3000);
-    return () => clearInterval(t);
+    const poll = setInterval(fetchLobby, 3000);
+    const heartbeat = setInterval(async () => {
+      try {
+        await fetch(`/api/lobbies/${lobbyId}/heartbeat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ playerId }),
+        });
+      } catch {
+        // ignore
+      }
+    }, 10_000);
+    return () => {
+      clearInterval(poll);
+      clearInterval(heartbeat);
+    };
   }, [lobbyId, playerId, ensureJoined, fetchLobby]);
 
   function occupantName(id?: string): string {
