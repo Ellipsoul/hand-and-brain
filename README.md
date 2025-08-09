@@ -1,3 +1,41 @@
+# Hand & Brain Chess (Next.js)
+
+Edge-friendly Next.js app scaffold for a realtime Hand & Brain chess game.
+
+## Getting started
+
+1. Install deps
+
+```
+npm install
+```
+
+2. Configure KV
+
+- Copy `.env.example` to `.env.local` and fill your Vercel KV credentials.
+
+3. Run the dev server
+
+```
+npm run dev
+```
+
+4. WebSocket test
+
+- Connect to `/socket` with a WS client and ensure echo works.
+
+## Tech
+- Next.js (App Router, TS, Tailwind)
+- Native WebSocket route (Edge runtime)
+- @vercel/kv for lobby/game state (to be wired)
+- chess.js helpers in `lib/chess.ts`
+
+## Next steps
+- Implement lobby flows with KV
+- Add game creation on 4 ready players
+- Wire WebSocket rooms for lobby/game events
+- Add BrainPanel and HandBoard components
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
