@@ -25,6 +25,17 @@ export interface Player {
 /**
  * Lobby holds waiting players and desired game settings.
  */
+export interface LobbyRoles {
+  /** Player occupying White Hand role (player id), if any. */
+  whiteHand?: Player["id"];
+  /** Player occupying White Brain role (player id), if any. */
+  whiteBrain?: Player["id"];
+  /** Player occupying Black Hand role (player id), if any. */
+  blackHand?: Player["id"];
+  /** Player occupying Black Brain role (player id), if any. */
+  blackBrain?: Player["id"];
+}
+
 export interface Lobby {
   /** Lobby unique id. */
   id: string;
@@ -34,6 +45,10 @@ export interface Lobby {
   players: Player[];
   /** Player ids who toggled ready. When 4 are ready -> create a game. */
   readyPlayerIds: string[];
+  /** Role assignments within the lobby. */
+  roles: LobbyRoles;
+  /** Last role change timestamp per player (ms since epoch) for debounce. */
+  lastRoleChangeAt: Record<string, number>;
   /** Base time (per side) in seconds. */
   baseTimeSeconds: number;
   /** Increment added after a move (per side) in seconds. */

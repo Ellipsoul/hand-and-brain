@@ -29,6 +29,8 @@ export async function POST(req: Request) {
       createdAt: Date.now(),
       players: [creator],
       readyPlayerIds: [],
+      roles: {},
+      lastRoleChangeAt: {},
       baseTimeSeconds: parsed.baseTimeSeconds,
       incrementSeconds: parsed.incrementSeconds,
     };
