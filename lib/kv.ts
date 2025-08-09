@@ -1,10 +1,5 @@
 /**
- * KV client wrapper for @vercel/kv.
- * Ensure KV_URL and KV_REST_API_TOKEN (or platform-specific vars) are set in your environment.
+ * Deprecated: Vercel KV wrapper. This file is kept to avoid import churn during refactor.
+ * All new code should use lib/redis.ts. Existing imports will be migrated.
  */
-import { kv as vercelKv } from "@vercel/kv";
-
-/**
- * Export the KV instance for use in server routes/handlers.
- */
-export const kv = vercelKv;
+export const kv = undefined as unknown as never;

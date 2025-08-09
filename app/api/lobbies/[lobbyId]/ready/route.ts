@@ -1,8 +1,8 @@
-import { kv } from "@/lib/kv";
+import { getRedis } from "@/lib/redis";
 import { z } from "zod";
 import type { Lobby } from "@/lib/types";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 const ReadySchema = z.object({ playerId: z.string(), ready: z.boolean() });
 
@@ -13,7 +13,9 @@ export async function POST(req: Request, context: unknown) {
     const parsed = ReadySchema.parse(json);
 
     const key = `lobby:${params.lobbyId}`;
-    const lobby = await kv.get<Lobby>(key);
+    const redis = await getRedis();
+    const str = await redis.get(key);
+    const lobby = str ? (JSON.parse(str) as Lobby) : null;
     if (!lobby) {
       return new Response(JSON.stringify({ error: "Lobby not found" }), {
         headers: { "content-type": "application/json" },
@@ -26,7 +28,7 @@ export async function POST(req: Request, context: unknown) {
     else set.delete(parsed.playerId);
     lobby.readyPlayerIds = Array.from(set);
 
-    await kv.set(key, lobby);
+    await redis.set(key, JSON.stringify(lobby));
 
     // Game creation and socket signal will be added later when socket is wired.
 

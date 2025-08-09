@@ -1,8 +1,8 @@
-import { kv } from "@/lib/kv";
+import { getRedis } from "@/lib/redis";
 import { z } from "zod";
 import type { Lobby, LobbyRoles, Team, Role } from "@/lib/types";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 const SelectionSchema = z.object({
   playerId: z.string(),
@@ -21,7 +21,9 @@ export async function POST(req: Request, context: unknown) {
     const parsed = SelectionSchema.parse(body);
 
     const key = `lobby:${params.lobbyId}`;
-    const lobby = await kv.get<Lobby>(key);
+    const redis = await getRedis();
+    const str = await redis.get(key);
+    const lobby = str ? (JSON.parse(str) as Lobby) : null;
     if (!lobby) {
       return new Response(JSON.stringify({ error: "Lobby not found" }), {
         headers: { "content-type": "application/json" },
@@ -54,7 +56,7 @@ export async function POST(req: Request, context: unknown) {
     // If selection is null -> spectator; persist and return
     if (!parsed.selection) {
       lobby.lastRoleChangeAt[parsed.playerId] = now;
-      await kv.set(key, lobby);
+      await redis.set(key, JSON.stringify(lobby));
       return new Response(
         JSON.stringify({ lobby }),
         { headers: { "content-type": "application/json" }, status: 200 }
@@ -83,7 +85,7 @@ export async function POST(req: Request, context: unknown) {
     // Assign role
     roles[roleKey] = parsed.playerId;
     lobby.lastRoleChangeAt[parsed.playerId] = now;
-    await kv.set(key, lobby);
+    await redis.set(key, JSON.stringify(lobby));
 
     return new Response(JSON.stringify({ lobby }), {
       headers: { "content-type": "application/json" },

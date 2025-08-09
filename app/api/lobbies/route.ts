@@ -1,8 +1,8 @@
-import { kv } from "@/lib/kv";
+import { getRedis } from "@/lib/redis";
 import { z } from "zod";
 import type { Lobby, Player } from "@/lib/types";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 const CreateLobbySchema = z.object({
   player: z.object({ id: z.string(), name: z.string() }),
@@ -35,7 +35,8 @@ export async function POST(req: Request) {
       incrementSeconds: parsed.incrementSeconds,
     };
 
-    await kv.set(lobbyKey, lobby);
+    const redis = await getRedis();
+    await redis.set(lobbyKey, JSON.stringify(lobby));
 
     return new Response(JSON.stringify({ lobby }), {
       headers: { "content-type": "application/json" },

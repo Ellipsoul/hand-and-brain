@@ -1,11 +1,13 @@
-import { kv } from "@/lib/kv";
+import { getRedis } from "@/lib/redis";
 import type { Lobby } from "@/lib/types";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 export async function GET(req: Request, context: unknown) {
   const { params } = (context || {}) as { params: { lobbyId: string } };
-  const lobby = await kv.get<Lobby>(`lobby:${params.lobbyId}`);
+  const redis = await getRedis();
+  const str = await redis.get(`lobby:${params.lobbyId}`);
+  const lobby = str ? (JSON.parse(str) as Lobby) : null;
   if (!lobby) {
     return new Response(JSON.stringify({ error: "Lobby not found" }), {
       headers: { "content-type": "application/json" },

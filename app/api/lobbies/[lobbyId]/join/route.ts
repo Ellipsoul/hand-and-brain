@@ -1,8 +1,8 @@
-import { kv } from "@/lib/kv";
+import { getRedis } from "@/lib/redis";
 import { z } from "zod";
 import type { Lobby, Player } from "@/lib/types";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 const JoinSchema = z.object({ player: z.object({ id: z.string(), name: z.string() }) });
 
@@ -13,7 +13,9 @@ export async function POST(req: Request, context: unknown) {
     const parsed = JoinSchema.parse(json);
 
     const key = `lobby:${params.lobbyId}`;
-    const lobby = await kv.get<Lobby>(key);
+    const redis = await getRedis();
+    const str = await redis.get(key);
+    const lobby = str ? (JSON.parse(str) as Lobby) : null;
     if (!lobby) {
       return new Response(JSON.stringify({ error: "Lobby not found" }), {
         headers: { "content-type": "application/json" },
@@ -25,7 +27,7 @@ export async function POST(req: Request, context: unknown) {
     if (!exists) {
       const newPlayer: Player = { ...parsed.player, isObserver: true };
       lobby.players.push(newPlayer);
-      await kv.set(key, lobby);
+      await redis.set(key, JSON.stringify(lobby));
     }
 
     return new Response(JSON.stringify({ lobby }), {
