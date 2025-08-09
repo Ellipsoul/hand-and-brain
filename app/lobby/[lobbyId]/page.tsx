@@ -51,12 +51,16 @@ export default function LobbyPage(): ReactElement {
   const [connected, setConnected] = useState<boolean>(false);
 
   const connectWs = useCallback((): void => {
-    const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const protocol =
+      typeof window !== "undefined" && window.location.protocol === "https:"
+        ? "wss:"
+        : "ws:";
     const url = `${protocol}//${window.location.host}/api/ws`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
     ws.addEventListener("open", () => {
       setConnected(true);
+      setError("");
       // send join
       ws.send(
         JSON.stringify({
@@ -82,6 +86,7 @@ export default function LobbyPage(): ReactElement {
       setConnected(false);
     });
     ws.addEventListener("error", (ev) => {
+      console.log(ev);
       setConnected(false);
       try {
         // Some environments may not provide detailed error events
@@ -134,16 +139,30 @@ export default function LobbyPage(): ReactElement {
     setBusy(true);
     setError("");
     try {
-      // Send role change over WebSocket
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        setError("Not connected");
+      // Send role change over WebSocket (handle CONNECTING by deferring send)
+      const ws = wsRef.current;
+      if (!ws) {
+        setError("Disconnected");
         return;
       }
-      wsRef.current.send(
-        JSON.stringify({ type: "role", selection: sel }),
-      );
-      setLastChangeAt(now);
-      // Server will broadcast updated lobby; nothing to await here
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "role", selection: sel }));
+        setLastChangeAt(now);
+        return;
+      }
+      if (ws.readyState === WebSocket.CONNECTING) {
+        const handler = () => {
+          try {
+            ws.send(JSON.stringify({ type: "role", selection: sel }));
+            setLastChangeAt(Date.now());
+          } finally {
+            ws.removeEventListener("open", handler);
+          }
+        };
+        ws.addEventListener("open", handler);
+        return;
+      }
+      setError("Disconnected");
       return;
     } catch (e: unknown) {
       setError(String(e));
@@ -163,10 +182,8 @@ export default function LobbyPage(): ReactElement {
           <div className="flex items-center gap-4 text-sm text-neutral-400">
             <div className="flex items-center gap-2">
               <span
-                className={
-                  "inline-block h-2 w-2 rounded-full " +
-                  (connected ? "bg-green-500" : "bg-red-500")
-                }
+                className={"inline-block h-2 w-2 rounded-full " +
+                  (connected ? "bg-green-500" : "bg-red-500")}
                 aria-hidden
               />
               <span className={connected ? "text-green-400" : "text-red-400"}>
@@ -174,7 +191,8 @@ export default function LobbyPage(): ReactElement {
               </span>
             </div>
             <div>
-              Signed in as <span className="text-neutral-200 font-medium">{name}</span>
+              Signed in as{" "}
+              <span className="text-neutral-200 font-medium">{name}</span>
             </div>
           </div>
         </header>
@@ -186,8 +204,8 @@ export default function LobbyPage(): ReactElement {
               <button
                 className="w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-left hover:bg-neutral-900"
                 onClick={() => trySelect({ team: "WHITE", role: "HAND" })}
-                disabled={busy}
-                aria-disabled={busy}
+                disabled={!connected || busy}
+                aria-disabled={!connected || busy}
               >
                 <div className="text-xs text-neutral-500">Hand</div>
                 <div className="text-neutral-200">
@@ -197,8 +215,8 @@ export default function LobbyPage(): ReactElement {
               <button
                 className="w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-left hover:bg-neutral-900"
                 onClick={() => trySelect({ team: "WHITE", role: "BRAIN" })}
-                disabled={busy}
-                aria-disabled={busy}
+                disabled={!connected || busy}
+                aria-disabled={!connected || busy}
               >
                 <div className="text-xs text-neutral-500">Brain</div>
                 <div className="text-neutral-200">
@@ -219,7 +237,7 @@ export default function LobbyPage(): ReactElement {
                       <button
                         className="rounded-md border border-neutral-800 bg-neutral-950 px-2 py-1 text-xs hover:bg-neutral-900"
                         onClick={() => trySelect(null)}
-                        disabled={busy}
+                        disabled={!connected || busy}
                       >
                         Stay spectator
                       </button>
@@ -239,8 +257,8 @@ export default function LobbyPage(): ReactElement {
               <button
                 className="w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-left hover:bg-neutral-900"
                 onClick={() => trySelect({ team: "BLACK", role: "HAND" })}
-                disabled={busy}
-                aria-disabled={busy}
+                disabled={!connected || busy}
+                aria-disabled={!connected || busy}
               >
                 <div className="text-xs text-neutral-500">Hand</div>
                 <div className="text-neutral-200">
@@ -250,8 +268,8 @@ export default function LobbyPage(): ReactElement {
               <button
                 className="w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-left hover:bg-neutral-900"
                 onClick={() => trySelect({ team: "BLACK", role: "BRAIN" })}
-                disabled={busy}
-                aria-disabled={busy}
+                disabled={!connected || busy}
+                aria-disabled={!connected || busy}
               >
                 <div className="text-xs text-neutral-500">Brain</div>
                 <div className="text-neutral-200">
