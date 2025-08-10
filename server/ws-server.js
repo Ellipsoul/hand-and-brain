@@ -290,6 +290,10 @@ function roleKeyFromSelection(sel) {
         const gameStr = await redis.get(`game:${gameId}`);
         if (!gameStr) return;
         const game = JSON.parse(gameStr);
+        if (game.status && game.status !== "ACTIVE") {
+          ws.send(JSON.stringify({ type: "error", error: "Game is over" }));
+          return;
+        }
         const expectedId = game.turn === "WHITE"
           ? game.players.whiteHand
           : game.players.blackHand;
@@ -398,13 +402,35 @@ function roleKeyFromSelection(sel) {
         }
         game.fen = chess.fen();
         game.moveNumber = game.moveNumber + 1;
-        game.turn = game.turn === "WHITE" ? "BLACK" : "WHITE";
         game.selectedPiece = null;
-        game.status = chess.isGameOver()
-          ? (chess.isCheckmate()
-            ? (game.turn === "WHITE" ? "BLACK_WON" : "WHITE_WON")
-            : "DRAW")
-          : "ACTIVE";
+        // Determine game end status and result
+        let status = "ACTIVE";
+        let result = undefined;
+        let resultReason = undefined;
+        if (chess.isCheckmate()) {
+          const sideToMove = chess.turn() === "w" ? "WHITE" : "BLACK"; // checkmated side
+          const winner = sideToMove === "WHITE" ? "BLACK" : "WHITE";
+          status = winner === "WHITE" ? "WHITE_WON" : "BLACK_WON";
+          result = winner === "WHITE" ? "1-0" : "0-1";
+          resultReason = "Checkmate";
+        } else if (chess.isStalemate()) {
+          status = "DRAW";
+          result = "1/2-1/2";
+          resultReason = "Stalemate";
+        } else if (chess.isDraw()) {
+          status = "DRAW";
+          result = "1/2-1/2";
+          if (chess.isThreefoldRepetition()) resultReason = "Threefold repetition";
+          else if (chess.isInsufficientMaterial()) resultReason = "Insufficient material";
+          else if (chess.isDrawByFiftyMoves()) resultReason = "Fifty-move rule";
+          else resultReason = "Draw";
+        } else {
+          // game continues: toggle turn
+          game.turn = game.turn === "WHITE" ? "BLACK" : "WHITE";
+        }
+        game.status = status;
+        game.result = result;
+        game.resultReason = resultReason;
         game.moves = Array.isArray(game.moves) ? game.moves : [];
         game.moves.push(move.san);
         await redis.set(`game:${gameId}`, JSON.stringify(game));

@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import {
   type CSSProperties,
   type ReactElement,
@@ -31,6 +32,8 @@ interface GameViewState {
   players: GamePlayers;
   playerNames?: Record<string, string>;
   status: "ACTIVE" | "PAUSED" | "WHITE_WON" | "BLACK_WON" | "DRAW";
+  result?: string; // "1-0" | "0-1" | "1/2-1/2"
+  resultReason?: string; // Checkmate, Stalemate, etc.
   moves: string[]; // SAN list
 }
 
@@ -78,7 +81,7 @@ export default function GamePage(): ReactElement {
   const [fromSquare, setFromSquare] = useState<string | null>(null);
 
   const isMyTurn = useMemo(() => {
-    if (!game) return false;
+    if (!game || game.status !== "ACTIVE") return false;
     const phase = game.selectedPiece ? "BRAIN" : "HAND";
     if (phase === "HAND") {
       return (
@@ -149,6 +152,8 @@ export default function GamePage(): ReactElement {
     if (
       !game || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN
     ) return;
+    // Do not allow interactions if game is over
+    if (game.status !== "ACTIVE") return;
     // Determine phase
     const phase = game.selectedPiece ? "BRAIN" : "HAND";
     if (!isMyTurn) return;
@@ -264,7 +269,7 @@ export default function GamePage(): ReactElement {
           id="hab-board"
           position={game?.fen || "start"}
           boardOrientation={orientation}
-          arePiecesDraggable={Boolean(game && game.selectedPiece && isMyTurn)}
+          arePiecesDraggable={Boolean(game && game.selectedPiece && isMyTurn && game.status === "ACTIVE")}
           onSquareClick={onSquareClick}
           onPieceDrop={onPieceDrop}
           customSquareStyles={customSquareStyles()}
@@ -299,16 +304,24 @@ export default function GamePage(): ReactElement {
       );
     }
     return (
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-neutral-400">
-            <th className="px-2 py-1 text-left font-normal">#</th>
-            <th className="px-2 py-1 text-left font-normal">White</th>
-            <th className="px-2 py-1 text-left font-normal">Black</th>
-          </tr>
-        </thead>
-        <tbody>{rows}</tbody>
-      </table>
+      <div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-neutral-400">
+              <th className="px-2 py-1 text-left font-normal">#</th>
+              <th className="px-2 py-1 text-left font-normal">White</th>
+              <th className="px-2 py-1 text-left font-normal">Black</th>
+            </tr>
+          </thead>
+          <tbody>{rows}</tbody>
+        </table>
+        {game?.result && (
+          <div className="mt-2 text-center text-neutral-300">
+            Result: <span className="font-medium">{game.result}</span>{" "}
+            {game.resultReason ? `(${game.resultReason})` : null}
+          </div>
+        )}
+      </div>
     ) as unknown as ReactElement;
   }
 
@@ -327,10 +340,36 @@ export default function GamePage(): ReactElement {
             <h1 className="text-xl font-semibold">Game</h1>
             <p className="text-sm text-neutral-400">Game ID: {gameId}</p>
           </div>
-          <div className="text-sm text-neutral-300" title={roleTooltip()}>
-            {game ? `Next: ${nextActor(game)}` : "Connecting..."}
+          <div className="flex items-center gap-3">
+            <div className="text-sm text-neutral-300" title={roleTooltip()}>
+              {game ? `Next: ${nextActor(game)}` : "Connecting..."}
+            </div>
+            <Link
+              href="/"
+              onClick={(e) => {
+                if (game && game.status === "ACTIVE") {
+                  e.preventDefault();
+                  setError("You can leave after the game ends");
+                }
+              }}
+              className={`rounded-md px-2.5 py-1 text-sm ${
+                game && game.status === "ACTIVE"
+                  ? "cursor-not-allowed border border-neutral-800 bg-neutral-900/60 text-neutral-500"
+                  : "border border-neutral-700 bg-neutral-900 text-neutral-200 hover:bg-neutral-800"
+              }`}
+              aria-disabled={Boolean(game && game.status === "ACTIVE")}
+              title={game && game.status === "ACTIVE" ? "You can leave after the game ends" : "Go home"}
+            >
+              Home
+            </Link>
           </div>
         </header>
+
+        {game && game.status !== "ACTIVE" && (
+          <div className="mb-4 rounded-md border border-amber-800 bg-amber-900/20 p-3 text-sm text-amber-200">
+            Game over: {game.resultReason || (game.status === "DRAW" ? "Draw" : game.status === "WHITE_WON" ? "White wins" : "Black wins")} {game.result ? `— ${game.result}` : ""}
+          </div>
+        )}
 
         {error && (
           <div className="mb-4 rounded-md border border-red-900 bg-red-950/30 p-3 text-sm text-red-300">
