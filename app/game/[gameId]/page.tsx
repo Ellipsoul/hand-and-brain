@@ -29,6 +29,7 @@ interface GameViewState {
   turn: Team;
   selectedPiece: "K" | "Q" | "R" | "B" | "N" | "P" | null;
   players: GamePlayers;
+  playerNames?: Record<string, string>;
   status: "ACTIVE" | "PAUSED" | "WHITE_WON" | "BLACK_WON" | "DRAW";
   moves: string[]; // SAN list
 }
@@ -264,6 +265,16 @@ export default function GamePage(): ReactElement {
     ) as unknown as ReactElement;
   }
 
+  function nameFor(id?: string): string {
+    if (!id) return "-";
+    return (game?.playerNames && game.playerNames[id]) || id;
+  }
+
+  function nextActorKey(): string {
+    const phase = game?.selectedPiece ? "BRAIN" : "HAND";
+    return `${game?.turn}_${phase}`;
+  }
+
   function renderMoves(): ReactElement {
     const rows: ReactElement[] = [];
     const moves = game?.moves || [];
@@ -332,25 +343,35 @@ export default function GamePage(): ReactElement {
                   <li className="flex items-center justify-between">
                     <span>Hand</span>
                     <span
-                      className={`font-medium ${
-                        game?.players.whiteHand === playerId
+                      className={`flex items-center gap-2 font-medium ${
+                        nextActorKey() === "WHITE_HAND"
                           ? "text-green-300"
                           : "text-neutral-200"
                       }`}
                     >
-                      {game?.players.whiteHand || "-"}
+                      {nameFor(game?.players.whiteHand)}
+                      {game?.players.whiteHand === playerId && (
+                        <span className="rounded bg-blue-900/40 px-1.5 py-0.5 text-xs text-blue-300">
+                          You
+                        </span>
+                      )}
                     </span>
                   </li>
                   <li className="flex items-center justify-between">
                     <span>Brain</span>
                     <span
-                      className={`font-medium ${
-                        game?.players.whiteBrain === playerId
+                      className={`flex items-center gap-2 font-medium ${
+                        nextActorKey() === "WHITE_BRAIN"
                           ? "text-green-300"
                           : "text-neutral-200"
                       }`}
                     >
-                      {game?.players.whiteBrain || "-"}
+                      {nameFor(game?.players.whiteBrain)}
+                      {game?.players.whiteBrain === playerId && (
+                        <span className="rounded bg-blue-900/40 px-1.5 py-0.5 text-xs text-blue-300">
+                          You
+                        </span>
+                      )}
                     </span>
                   </li>
                 </ul>
@@ -359,25 +380,35 @@ export default function GamePage(): ReactElement {
                   <li className="flex items-center justify-between">
                     <span>Hand</span>
                     <span
-                      className={`font-medium ${
-                        game?.players.blackHand === playerId
+                      className={`flex items-center gap-2 font-medium ${
+                        nextActorKey() === "BLACK_HAND"
                           ? "text-green-300"
                           : "text-neutral-200"
                       }`}
                     >
-                      {game?.players.blackHand || "-"}
+                      {nameFor(game?.players.blackHand)}
+                      {game?.players.blackHand === playerId && (
+                        <span className="rounded bg-blue-900/40 px-1.5 py-0.5 text-xs text-blue-300">
+                          You
+                        </span>
+                      )}
                     </span>
                   </li>
                   <li className="flex items-center justify-between">
                     <span>Brain</span>
                     <span
-                      className={`font-medium ${
-                        game?.players.blackBrain === playerId
+                      className={`flex items-center gap-2 font-medium ${
+                        nextActorKey() === "BLACK_BRAIN"
                           ? "text-green-300"
                           : "text-neutral-200"
                       }`}
                     >
-                      {game?.players.blackBrain || "-"}
+                      {nameFor(game?.players.blackBrain)}
+                      {game?.players.blackBrain === playerId && (
+                        <span className="rounded bg-blue-900/40 px-1.5 py-0.5 text-xs text-blue-300">
+                          You
+                        </span>
+                      )}
                     </span>
                   </li>
                 </ul>

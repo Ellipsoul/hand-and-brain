@@ -99,6 +99,8 @@ export interface GameState {
     blackBrain?: Player["id"];
     observers: Player["id"][];
   };
+  /** Map of player id to display name for UI. */
+  playerNames?: Record<string, string>;
   /** Server clocks. */
   clocks: ClockState;
   /** Creation timestamp (ms since epoch). */

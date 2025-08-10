@@ -238,6 +238,7 @@ nextApp.prepare().then(async () => {
               .map(p => p.id)
               .filter(pid => ![roles.whiteHand, roles.whiteBrain, roles.blackHand, roles.blackBrain].includes(pid)),
           },
+          playerNames: Object.fromEntries(lob.players.map((p) => [p.id, p.name])),
           clocks: { whiteMs: 0, blackMs: 0, lastTickAt: Date.now(), runningFor: null },
           createdAt: Date.now(),
           status: "ACTIVE",
