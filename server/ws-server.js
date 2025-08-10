@@ -1,19 +1,15 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 /*
  * Simple development WebSocket server for lobby presence and role changes.
  * Run with: npm run ws
  */
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { WebSocketServer } = require("ws");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { createClient } = require("redis");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const path = require("path");
-const nodeCrypto = require("node:crypto");
 const { Chess } = require("chess.js");
 
 // Load env for this standalone server: prefer .env.local, then .env
 try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const dotenv = require("dotenv");
   const root = process.cwd();
   dotenv.config({ path: path.join(root, ".env.local") });
@@ -211,13 +207,21 @@ function roleKeyFromSelection(sel) {
         if (!lob) return;
         const hostId = lob.hostId || (lob.players[0] && lob.players[0].id);
         if (!hostId || hostId !== sess.playerId) {
-          ws.send(JSON.stringify({ type: "error", error: "Only host can start" }));
+          ws.send(
+            JSON.stringify({ type: "error", error: "Only host can start" }),
+          );
           return;
         }
         const roles = lob.roles || {};
-        const filled = roles.whiteHand && roles.whiteBrain && roles.blackHand && roles.blackBrain;
+        const filled = roles.whiteHand && roles.whiteBrain && roles.blackHand &&
+          roles.blackBrain;
         if (!filled) {
-          ws.send(JSON.stringify({ type: "error", error: "All roles must be filled" }));
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              error: "All roles must be filled",
+            }),
+          );
           return;
         }
         const gameId = sess.lobbyId;
@@ -235,11 +239,25 @@ function roleKeyFromSelection(sel) {
             blackHand: roles.blackHand,
             blackBrain: roles.blackBrain,
             observers: lob.players
-              .map(p => p.id)
-              .filter(pid => ![roles.whiteHand, roles.whiteBrain, roles.blackHand, roles.blackBrain].includes(pid)),
+              .map((p) => p.id)
+              .filter((pid) =>
+                ![
+                  roles.whiteHand,
+                  roles.whiteBrain,
+                  roles.blackHand,
+                  roles.blackBrain,
+                ].includes(pid)
+              ),
           },
-          playerNames: Object.fromEntries(lob.players.map((p) => [p.id, p.name])),
-          clocks: { whiteMs: 0, blackMs: 0, lastTickAt: Date.now(), runningFor: null },
+          playerNames: Object.fromEntries(
+            lob.players.map((p) => [p.id, p.name]),
+          ),
+          clocks: {
+            whiteMs: 0,
+            blackMs: 0,
+            lastTickAt: Date.now(),
+            runningFor: null,
+          },
           createdAt: Date.now(),
           status: "ACTIVE",
           moves: [],
@@ -272,13 +290,19 @@ function roleKeyFromSelection(sel) {
         const gameStr = await redis.get(`game:${gameId}`);
         if (!gameStr) return;
         const game = JSON.parse(gameStr);
-        const expectedId = game.turn === "WHITE" ? game.players.whiteHand : game.players.blackHand;
+        const expectedId = game.turn === "WHITE"
+          ? game.players.whiteHand
+          : game.players.blackHand;
         if (playerId !== expectedId) {
-          ws.send(JSON.stringify({ type: "error", error: "Not your turn (hand)" }));
+          ws.send(
+            JSON.stringify({ type: "error", error: "Not your turn (hand)" }),
+          );
           return;
         }
         if (game.selectedPiece) {
-          ws.send(JSON.stringify({ type: "error", error: "Piece already selected" }));
+          ws.send(
+            JSON.stringify({ type: "error", error: "Piece already selected" }),
+          );
           return;
         }
         const validPieces = ["K", "Q", "R", "B", "N", "P"];
@@ -286,10 +310,32 @@ function roleKeyFromSelection(sel) {
           ws.send(JSON.stringify({ type: "error", error: "Invalid piece" }));
           return;
         }
+        // Ensure there is at least one legal move for this piece type
+        try {
+          const chess = new Chess(game.fen);
+          const legal = chess.moves({
+            piece: piece.toLowerCase(),
+            verbose: true,
+          });
+          if (!Array.isArray(legal) || legal.length === 0) {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                error: "No legal moves for selected piece",
+              }),
+            );
+            return;
+          }
+        } catch {}
         game.selectedPiece = piece;
         await redis.set(`game:${gameId}`, JSON.stringify(game));
         const lobId = game.lobbyId;
-        const payload = { type: "pieceSelected", gameId, piece, nextActor: getNextActor(game) };
+        const payload = {
+          type: "pieceSelected",
+          gameId,
+          piece,
+          nextActor: getNextActor(game),
+        };
         const set = rooms.get(lobId);
         if (set) {
           for (const sock of set) {
@@ -304,19 +350,30 @@ function roleKeyFromSelection(sel) {
         const gameStr = await redis.get(`game:${gameId}`);
         if (!gameStr) return;
         const game = JSON.parse(gameStr);
-        const brainId = game.turn === "WHITE" ? game.players.whiteBrain : game.players.blackBrain;
+        const brainId = game.turn === "WHITE"
+          ? game.players.whiteBrain
+          : game.players.blackBrain;
         if (playerId !== brainId) {
-          ws.send(JSON.stringify({ type: "error", error: "Not your turn (brain)" }));
+          ws.send(
+            JSON.stringify({ type: "error", error: "Not your turn (brain)" }),
+          );
           return;
         }
         if (!game.selectedPiece) {
-          ws.send(JSON.stringify({ type: "error", error: "Hand must select a piece first" }));
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              error: "Hand must select a piece first",
+            }),
+          );
           return;
         }
         const chess = new Chess(game.fen);
         const pieceAtFrom = chess.get(from);
         if (!pieceAtFrom) {
-          ws.send(JSON.stringify({ type: "error", error: "No piece at source" }));
+          ws.send(
+            JSON.stringify({ type: "error", error: "No piece at source" }),
+          );
           return;
         }
         const expectedColor = game.turn === "WHITE" ? "w" : "b";
@@ -326,7 +383,12 @@ function roleKeyFromSelection(sel) {
         }
         const typeUpper = pieceAtFrom.type.toUpperCase();
         if (typeUpper !== game.selectedPiece) {
-          ws.send(JSON.stringify({ type: "error", error: "Must move selected piece type" }));
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              error: "Must move selected piece type",
+            }),
+          );
           return;
         }
         const move = chess.move({ from, to, promotion });
@@ -338,7 +400,11 @@ function roleKeyFromSelection(sel) {
         game.moveNumber = game.moveNumber + 1;
         game.turn = game.turn === "WHITE" ? "BLACK" : "WHITE";
         game.selectedPiece = null;
-        game.status = chess.isGameOver() ? (chess.isCheckmate() ? (game.turn === "WHITE" ? "BLACK_WON" : "WHITE_WON") : "DRAW") : "ACTIVE";
+        game.status = chess.isGameOver()
+          ? (chess.isCheckmate()
+            ? (game.turn === "WHITE" ? "BLACK_WON" : "WHITE_WON")
+            : "DRAW")
+          : "ACTIVE";
         game.moves = Array.isArray(game.moves) ? game.moves : [];
         game.moves.push(move.san);
         await redis.set(`game:${gameId}`, JSON.stringify(game));

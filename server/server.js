@@ -9,7 +9,6 @@ const next = require("next");
 const { WebSocket, WebSocketServer } = require("ws");
 const { createClient } = require("redis");
 const path = require("path");
-const nodeCrypto = require("node:crypto");
 const { Chess } = require("chess.js");
 
 // Load env (.env.local then .env)
@@ -210,13 +209,21 @@ nextApp.prepare().then(async () => {
         if (!lob) return;
         const hostId = lob.hostId || (lob.players[0] && lob.players[0].id);
         if (!hostId || hostId !== sess.playerId) {
-          ws.send(JSON.stringify({ type: "error", error: "Only host can start" }));
+          ws.send(
+            JSON.stringify({ type: "error", error: "Only host can start" }),
+          );
           return;
         }
         const roles = lob.roles || {};
-        const filled = roles.whiteHand && roles.whiteBrain && roles.blackHand && roles.blackBrain;
+        const filled = roles.whiteHand && roles.whiteBrain && roles.blackHand &&
+          roles.blackBrain;
         if (!filled) {
-          ws.send(JSON.stringify({ type: "error", error: "All roles must be filled" }));
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              error: "All roles must be filled",
+            }),
+          );
           return;
         }
         // Persist game using lobbyId as gameId
@@ -235,11 +242,25 @@ nextApp.prepare().then(async () => {
             blackHand: roles.blackHand,
             blackBrain: roles.blackBrain,
             observers: lob.players
-              .map(p => p.id)
-              .filter(pid => ![roles.whiteHand, roles.whiteBrain, roles.blackHand, roles.blackBrain].includes(pid)),
+              .map((p) => p.id)
+              .filter((pid) =>
+                ![
+                  roles.whiteHand,
+                  roles.whiteBrain,
+                  roles.blackHand,
+                  roles.blackBrain,
+                ].includes(pid)
+              ),
           },
-          playerNames: Object.fromEntries(lob.players.map((p) => [p.id, p.name])),
-          clocks: { whiteMs: 0, blackMs: 0, lastTickAt: Date.now(), runningFor: null },
+          playerNames: Object.fromEntries(
+            lob.players.map((p) => [p.id, p.name]),
+          ),
+          clocks: {
+            whiteMs: 0,
+            blackMs: 0,
+            lastTickAt: Date.now(),
+            runningFor: null,
+          },
           createdAt: Date.now(),
           status: "ACTIVE",
           moves: [],
@@ -274,13 +295,19 @@ nextApp.prepare().then(async () => {
         if (!gameStr) return;
         const game = JSON.parse(gameStr);
         // Validate actor: must be HAND of current turn
-        const expectedId = game.turn === "WHITE" ? game.players.whiteHand : game.players.blackHand;
+        const expectedId = game.turn === "WHITE"
+          ? game.players.whiteHand
+          : game.players.blackHand;
         if (playerId !== expectedId) {
-          ws.send(JSON.stringify({ type: "error", error: "Not your turn (hand)" }));
+          ws.send(
+            JSON.stringify({ type: "error", error: "Not your turn (hand)" }),
+          );
           return;
         }
         if (game.selectedPiece) {
-          ws.send(JSON.stringify({ type: "error", error: "Piece already selected" }));
+          ws.send(
+            JSON.stringify({ type: "error", error: "Piece already selected" }),
+          );
           return;
         }
         // piece must be one of KQRBNP
@@ -289,15 +316,39 @@ nextApp.prepare().then(async () => {
           ws.send(JSON.stringify({ type: "error", error: "Invalid piece" }));
           return;
         }
+        // Ensure there is at least one legal move for this piece type
+        try {
+          const chess = new Chess(game.fen);
+          const legal = chess.moves({
+            piece: piece.toLowerCase(),
+            verbose: true,
+          });
+          if (!Array.isArray(legal) || legal.length === 0) {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                error: "No legal moves for selected piece",
+              }),
+            );
+            return;
+          }
+        } catch {}
         game.selectedPiece = piece;
         await redis.set(`game:${gameId}`, JSON.stringify(game));
         // broadcast selection
         const lobId = game.lobbyId;
-        const payload = { type: "pieceSelected", gameId, piece, nextActor: getNextActor(game) };
+        const payload = {
+          type: "pieceSelected",
+          gameId,
+          piece,
+          nextActor: getNextActor(game),
+        };
         const set = rooms.get(lobId);
         if (set) {
           for (const client of set) {
-            if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(payload));
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(JSON.stringify(payload));
+            }
           }
         }
         return;
@@ -308,20 +359,31 @@ nextApp.prepare().then(async () => {
         const gameStr = await redis.get(`game:${gameId}`);
         if (!gameStr) return;
         const game = JSON.parse(gameStr);
-        const brainId = game.turn === "WHITE" ? game.players.whiteBrain : game.players.blackBrain;
+        const brainId = game.turn === "WHITE"
+          ? game.players.whiteBrain
+          : game.players.blackBrain;
         if (playerId !== brainId) {
-          ws.send(JSON.stringify({ type: "error", error: "Not your turn (brain)" }));
+          ws.send(
+            JSON.stringify({ type: "error", error: "Not your turn (brain)" }),
+          );
           return;
         }
         if (!game.selectedPiece) {
-          ws.send(JSON.stringify({ type: "error", error: "Hand must select a piece first" }));
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              error: "Hand must select a piece first",
+            }),
+          );
           return;
         }
         // Validate move with chess.js and ensure moving piece matches selected type
         const chess = new Chess(game.fen);
         const pieceAtFrom = chess.get(from);
         if (!pieceAtFrom) {
-          ws.send(JSON.stringify({ type: "error", error: "No piece at source" }));
+          ws.send(
+            JSON.stringify({ type: "error", error: "No piece at source" }),
+          );
           return;
         }
         const expectedColor = game.turn === "WHITE" ? "w" : "b";
@@ -332,7 +394,12 @@ nextApp.prepare().then(async () => {
         // pieceAtFrom.type is lowercase; map to uppercase
         const typeUpper = pieceAtFrom.type.toUpperCase();
         if (typeUpper !== game.selectedPiece) {
-          ws.send(JSON.stringify({ type: "error", error: "Must move selected piece type" }));
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              error: "Must move selected piece type",
+            }),
+          );
           return;
         }
         const move = chess.move({ from, to, promotion });
@@ -345,7 +412,11 @@ nextApp.prepare().then(async () => {
         game.moveNumber = game.moveNumber + 1;
         game.turn = game.turn === "WHITE" ? "BLACK" : "WHITE";
         game.selectedPiece = null;
-        game.status = chess.isGameOver() ? (chess.isCheckmate() ? (game.turn === "WHITE" ? "BLACK_WON" : "WHITE_WON") : "DRAW") : "ACTIVE";
+        game.status = chess.isGameOver()
+          ? (chess.isCheckmate()
+            ? (game.turn === "WHITE" ? "BLACK_WON" : "WHITE_WON")
+            : "DRAW")
+          : "ACTIVE";
         game.moves = Array.isArray(game.moves) ? game.moves : [];
         game.moves.push(move.san);
         await redis.set(`game:${gameId}`, JSON.stringify(game));

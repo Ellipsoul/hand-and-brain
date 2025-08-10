@@ -160,13 +160,21 @@ export default function GamePage(): ReactElement {
       const expectedColor = game.turn === "WHITE" ? "w" : "b";
       if (p.color !== expectedColor) return;
       const pieceType = p.type.toUpperCase() as GameViewState["selectedPiece"];
+      // Client-side guard: ensure at least one legal move exists for this piece type
+      try {
+        const legal = chess.moves({ piece: p.type, verbose: true });
+        if (!Array.isArray(legal) || legal.length === 0) {
+          setError("No legal moves for that piece type");
+          return;
+        }
+      } catch {}
       wsRef.current.send(
         JSON.stringify({
           type: "selectPiece",
           gameId,
           playerId,
           piece: pieceType,
-        }),
+        })
       );
     } else {
       // Brain: select from and to squares (two-click)
