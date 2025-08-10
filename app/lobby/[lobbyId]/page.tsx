@@ -22,6 +22,7 @@ export default function LobbyPage(): ReactElement {
   const [lobby, setLobby] = useState<Lobby | null>(null);
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
+  const [copied, setCopied] = useState<boolean>(false);
 
   // Client identity
   const playerId = useMemo<string>(() => {
@@ -114,22 +115,33 @@ export default function LobbyPage(): ReactElement {
     };
   }, [lobbyId, playerId, connectWs, wsRef]);
 
+  /**
+   * Returns the display name for a given player id occupying a role.
+   */
   function occupantName(id?: string): string {
     if (!id || !lobby) return "Empty";
     const p = lobby.players.find((x) => x.id === id);
     return p ? p.name : "Unknown";
   }
 
+  /**
+   * Computes the current list of spectators.
+   */
   function spectators(): Player[] {
     if (!lobby) return [];
     const roleIds = new Set<string>(
-      Object.values(lobby.roles || ({} as LobbyRoles)).filter((
-        v,
-      ): v is string => Boolean(v)),
+      Object.values(lobby.roles || ({} as LobbyRoles)).filter(
+        (
+          v,
+        ): v is string => Boolean(v),
+      ),
     );
     return lobby.players.filter((p) => !roleIds.has(p.id));
   }
 
+  /**
+   * Attempts to select a role (or clear selection with null).
+   */
   const trySelect = async (
     sel: { team: Team; role: Role } | null,
   ): Promise<void> => {
@@ -171,13 +183,55 @@ export default function LobbyPage(): ReactElement {
     }
   };
 
+  /**
+   * Cleanly leaves the lobby: notifies the server, closes the socket, navigates home.
+   */
+  const leaveLobby = useCallback((): void => {
+    try {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: "leave", lobbyId, playerId }));
+        } catch {}
+        try {
+          ws.close();
+        } catch {}
+      }
+    } finally {
+      wsRef.current = null;
+      router.push("/");
+    }
+  }, [router, wsRef, lobbyId, playerId]);
+
+  /**
+   * Copies the current lobby id to the clipboard with basic feedback.
+   */
+  const copyLobbyId = useCallback(async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(lobbyId);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch (e) {
+      setError(`Failed to copy lobby id, ${e}`);
+    }
+  }, [lobbyId]);
+
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-200 px-4 py-8">
       <div className="mx-auto w-full max-w-4xl">
         <header className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold">Lobby</h1>
-            <p className="text-sm text-neutral-400 break-all">{lobbyId}</p>
+            <button
+              type="button"
+              onClick={copyLobbyId}
+              className="text-left text-sm text-neutral-400 hover:text-neutral-300 underline decoration-dotted break-all"
+              aria-label="Copy lobby ID"
+              title={copied ? "Copied!" : "Click to copy"}
+            >
+              {copied ? "Copied! " : "Lobby ID: "}
+              {lobbyId}
+            </button>
           </div>
           <div className="flex items-center gap-4 text-sm text-neutral-400">
             <div className="flex items-center gap-2">
@@ -194,6 +248,14 @@ export default function LobbyPage(): ReactElement {
               Signed in as{" "}
               <span className="text-neutral-200 font-medium">{name}</span>
             </div>
+            <button
+              type="button"
+              onClick={leaveLobby}
+              className="rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1 text-neutral-200 hover:bg-neutral-900"
+              aria-label="Leave lobby and return home"
+            >
+              Home
+            </button>
           </div>
         </header>
 
@@ -233,15 +295,6 @@ export default function LobbyPage(): ReactElement {
                 {spectators().map((p) => (
                   <li key={p.id} className="flex items-center justify-between">
                     <span>{p.name}</span>
-                    {p.id === playerId && (
-                      <button
-                        className="rounded-md border border-neutral-800 bg-neutral-950 px-2 py-1 text-xs hover:bg-neutral-900"
-                        onClick={() => trySelect(null)}
-                        disabled={!connected || busy}
-                      >
-                        Stay spectator
-                      </button>
-                    )}
                   </li>
                 ))}
                 {spectators().length === 0 && (
