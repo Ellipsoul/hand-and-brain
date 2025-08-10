@@ -45,6 +45,8 @@ export interface Lobby {
   expiresAt: number;
   /** Players currently in lobby. */
   players: Player[];
+  /** Player id of the lobby host (creator). Optional for backward compatibility. */
+  hostId?: string;
   /** Player ids who toggled ready. When 4 are ready -> create a game. */
   readyPlayerIds: string[];
   /** Role assignments within the lobby. */

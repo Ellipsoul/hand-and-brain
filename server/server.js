@@ -9,6 +9,7 @@ const next = require("next");
 const { WebSocket, WebSocketServer } = require("ws");
 const { createClient } = require("redis");
 const path = require("path");
+const nodeCrypto = require("node:crypto");
 
 // Load env (.env.local then .env)
 try {
@@ -80,6 +81,14 @@ nextApp.prepare().then(async () => {
     const set = rooms.get(lobbyId);
     if (!set) return;
     const msg = JSON.stringify({ type: "lobby", lobby });
+    for (const client of set) {
+      if (client.readyState === WebSocket.OPEN) client.send(msg);
+    }
+  }
+  function broadcastStart(lobbyId, gameId) {
+    const set = rooms.get(lobbyId);
+    if (!set) return;
+    const msg = JSON.stringify({ type: "start", gameId });
     for (const client of set) {
       if (client.readyState === WebSocket.OPEN) client.send(msg);
     }
@@ -176,6 +185,28 @@ nextApp.prepare().then(async () => {
         lob.lastSeen[sess.playerId] = now();
         await setLobby(lob);
         broadcastLobby(sess.lobbyId, lob);
+        return;
+      }
+
+      if (msg.type === "start") {
+        const sess = sessions.get(ws);
+        if (!sess) return;
+        const lob = await getLobby(sess.lobbyId);
+        if (!lob) return;
+        const hostId = lob.hostId || (lob.players[0] && lob.players[0].id);
+        if (!hostId || hostId !== sess.playerId) {
+          ws.send(JSON.stringify({ type: "error", error: "Only host can start" }));
+          return;
+        }
+        const roles = lob.roles || {};
+        const filled = roles.whiteHand && roles.whiteBrain && roles.blackHand && roles.blackBrain;
+        if (!filled) {
+          ws.send(JSON.stringify({ type: "error", error: "All roles must be filled" }));
+          return;
+        }
+        const gameId = nodeCrypto.randomUUID ? nodeCrypto.randomUUID() : String(Date.now());
+        // For now, we don't persist the game; we just broadcast start with a gameId
+        broadcastStart(sess.lobbyId, gameId);
         return;
       }
 

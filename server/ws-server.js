@@ -8,6 +8,7 @@ const { WebSocketServer } = require("ws");
 const { createClient } = require("redis");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const path = require("path");
+const nodeCrypto = require("node:crypto");
 
 // Load env for this standalone server: prefer .env.local, then .env
 try {
@@ -80,6 +81,14 @@ function roleKeyFromSelection(sel) {
     const set = rooms.get(lobbyId);
     if (!set) return;
     const msg = JSON.stringify({ type: "lobby", lobby });
+    for (const sock of set) {
+      if (sock.readyState === 1) sock.send(msg);
+    }
+  }
+  function broadcastStart(lobbyId, gameId) {
+    const set = rooms.get(lobbyId);
+    if (!set) return;
+    const msg = JSON.stringify({ type: "start", gameId });
     for (const sock of set) {
       if (sock.readyState === 1) sock.send(msg);
     }
@@ -179,6 +188,27 @@ function roleKeyFromSelection(sel) {
         lob.lastSeen[playerId] = now();
         await setLobby(redis, lob);
         broadcastLobby(lobbyId, lob);
+        return;
+      }
+
+      if (msg.type === "start") {
+        const sess = sessions.get(ws);
+        if (!sess) return;
+        const lob = await getLobby(redis, sess.lobbyId);
+        if (!lob) return;
+        const hostId = lob.hostId || (lob.players[0] && lob.players[0].id);
+        if (!hostId || hostId !== sess.playerId) {
+          ws.send(JSON.stringify({ type: "error", error: "Only host can start" }));
+          return;
+        }
+        const roles = lob.roles || {};
+        const filled = roles.whiteHand && roles.whiteBrain && roles.blackHand && roles.blackBrain;
+        if (!filled) {
+          ws.send(JSON.stringify({ type: "error", error: "All roles must be filled" }));
+          return;
+        }
+        const gameId = nodeCrypto.randomUUID ? nodeCrypto.randomUUID() : String(Date.now());
+        broadcastStart(sess.lobbyId, gameId);
         return;
       }
 

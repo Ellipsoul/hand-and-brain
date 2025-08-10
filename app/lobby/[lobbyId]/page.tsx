@@ -78,7 +78,12 @@ export default function LobbyPage(): ReactElement {
           setLobby(msg.lobby as Lobby);
         } else if (msg.type === "joined") {
           setLobby(msg.lobby as Lobby);
+        } else if (msg.type === "start") {
+          const gid = String(msg.gameId || "");
+          console.log("[lobby] start message received", msg);
+          if (gid) router.push(`/game/${gid}`);
         } else if (msg.type === "error") {
+          console.error("[lobby] ws error", msg.error);
           setError(String(msg.error));
         }
       } catch {}
@@ -94,7 +99,7 @@ export default function LobbyPage(): ReactElement {
         setError("WebSocket error: connection issue");
       } catch {}
     });
-  }, [lobbyId, playerId, name, wsRef]);
+  }, [wsRef, lobbyId, playerId, name, router]);
 
   useEffect(() => {
     if (!lobbyId || !playerId) return;
@@ -216,6 +221,29 @@ export default function LobbyPage(): ReactElement {
     }
   }, [lobbyId]);
 
+  // Derived host id (supports older lobbies without hostId)
+  const hostId: string | undefined = useMemo<string | undefined>(
+    () => lobby?.hostId || lobby?.players?.[0]?.id,
+    [lobby],
+  );
+
+  const allRolesFilled: boolean = Boolean(
+    lobby?.roles.whiteHand &&
+      lobby?.roles.whiteBrain &&
+      lobby?.roles.blackHand &&
+      lobby?.roles.blackBrain,
+  );
+  const startGame = useCallback((): void => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      console.log("[lobby] sending start request");
+      ws.send(JSON.stringify({ type: "start" }));
+    } else {
+      console.warn("[lobby] cannot start, socket not open");
+      setError("Disconnected");
+    }
+  }, [wsRef]);
+
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-200 px-4 py-8">
       <div className="mx-auto w-full max-w-4xl">
@@ -247,7 +275,26 @@ export default function LobbyPage(): ReactElement {
             <div>
               Signed in as{" "}
               <span className="text-neutral-200 font-medium">{name}</span>
+              {playerId === hostId && (
+                <span className="ml-2 rounded border border-yellow-700 bg-yellow-900/30 px-2 py-0.5 text-xs text-yellow-300">
+                  Host
+                </span>
+              )}
             </div>
+            {playerId === hostId && (
+              <button
+                type="button"
+                onClick={startGame}
+                className="rounded-md border border-green-800 bg-green-950 px-3 py-1 text-green-200 hover:bg-green-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Start game"
+                disabled={!allRolesFilled || !connected}
+                title={!allRolesFilled
+                  ? "Assign all roles to start"
+                  : "Start game"}
+              >
+                Start Game
+              </button>
+            )}
             <button
               type="button"
               onClick={leaveLobby}
@@ -272,6 +319,10 @@ export default function LobbyPage(): ReactElement {
                 <div className="text-xs text-neutral-500">Hand</div>
                 <div className="text-neutral-200">
                   {occupantName(lobby?.roles.whiteHand)}
+                  {lobby?.roles.whiteHand &&
+                    lobby?.roles.whiteHand === hostId && (
+                    <span className="ml-2 text-xs text-yellow-400">(host)</span>
+                  )}
                 </div>
               </button>
               <button
@@ -283,6 +334,10 @@ export default function LobbyPage(): ReactElement {
                 <div className="text-xs text-neutral-500">Brain</div>
                 <div className="text-neutral-200">
                   {occupantName(lobby?.roles.whiteBrain)}
+                  {lobby?.roles.whiteBrain &&
+                    lobby?.roles.whiteBrain === hostId && (
+                    <span className="ml-2 text-xs text-yellow-400">(host)</span>
+                  )}
                 </div>
               </button>
             </div>
@@ -294,7 +349,14 @@ export default function LobbyPage(): ReactElement {
               <ul className="space-y-1 text-sm text-neutral-300">
                 {spectators().map((p) => (
                   <li key={p.id} className="flex items-center justify-between">
-                    <span>{p.name}</span>
+                    <span>
+                      {p.name}
+                      {p.id === hostId && (
+                        <span className="ml-2 text-xs text-yellow-400">
+                          (host)
+                        </span>
+                      )}
+                    </span>
                   </li>
                 ))}
                 {spectators().length === 0 && (
@@ -316,6 +378,10 @@ export default function LobbyPage(): ReactElement {
                 <div className="text-xs text-neutral-500">Hand</div>
                 <div className="text-neutral-200">
                   {occupantName(lobby?.roles.blackHand)}
+                  {lobby?.roles.blackHand &&
+                    lobby?.roles.blackHand === hostId && (
+                    <span className="ml-2 text-xs text-yellow-400">(host)</span>
+                  )}
                 </div>
               </button>
               <button
@@ -327,6 +393,10 @@ export default function LobbyPage(): ReactElement {
                 <div className="text-xs text-neutral-500">Brain</div>
                 <div className="text-neutral-200">
                   {occupantName(lobby?.roles.blackBrain)}
+                  {lobby?.roles.blackBrain &&
+                    lobby?.roles.blackBrain === hostId && (
+                    <span className="ml-2 text-xs text-yellow-400">(host)</span>
+                  )}
                 </div>
               </button>
             </div>

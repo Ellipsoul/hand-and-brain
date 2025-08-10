@@ -30,6 +30,7 @@ export async function POST(req: Request) {
       createdAt: now,
       expiresAt: now + 60 * 60 * 1000, // 1 hour
       players: [creator],
+      hostId: creator.id,
       readyPlayerIds: [],
       roles: {},
       lastRoleChangeAt: {},
