@@ -10,6 +10,7 @@ const { WebSocket, WebSocketServer } = require("ws");
 const { createClient } = require("redis");
 const path = require("path");
 const nodeCrypto = require("node:crypto");
+const { Chess } = require("chess.js");
 
 // Load env (.env.local then .env)
 try {
@@ -92,6 +93,20 @@ nextApp.prepare().then(async () => {
     for (const client of set) {
       if (client.readyState === WebSocket.OPEN) client.send(msg);
     }
+  }
+  function broadcastGame(lobbyId, game) {
+    const set = rooms.get(lobbyId);
+    if (!set) return;
+    const msg = JSON.stringify({ type: "game", game });
+    for (const client of set) {
+      if (client.readyState === WebSocket.OPEN) client.send(msg);
+    }
+  }
+  function getNextActor(game) {
+    // If no selectedPiece -> expecting HAND of game.turn,
+    // else expecting BRAIN of game.turn
+    const phase = game.selectedPiece ? "BRAIN" : "HAND";
+    return `${game.turn}_${phase}`; // e.g., WHITE_HAND
   }
 
   wss.on("connection", (ws) => {
@@ -204,9 +219,136 @@ nextApp.prepare().then(async () => {
           ws.send(JSON.stringify({ type: "error", error: "All roles must be filled" }));
           return;
         }
-        const gameId = nodeCrypto.randomUUID ? nodeCrypto.randomUUID() : String(Date.now());
-        // For now, we don't persist the game; we just broadcast start with a gameId
+        // Persist game using lobbyId as gameId
+        const gameId = sess.lobbyId;
+        const chess = new Chess();
+        const game = {
+          id: gameId,
+          lobbyId: sess.lobbyId,
+          fen: chess.fen(),
+          moveNumber: 0,
+          turn: "WHITE",
+          selectedPiece: null,
+          players: {
+            whiteHand: roles.whiteHand,
+            whiteBrain: roles.whiteBrain,
+            blackHand: roles.blackHand,
+            blackBrain: roles.blackBrain,
+            observers: lob.players
+              .map(p => p.id)
+              .filter(pid => ![roles.whiteHand, roles.whiteBrain, roles.blackHand, roles.blackBrain].includes(pid)),
+          },
+          clocks: { whiteMs: 0, blackMs: 0, lastTickAt: Date.now(), runningFor: null },
+          createdAt: Date.now(),
+          status: "ACTIVE",
+          moves: [],
+        };
+        await redis.set(`game:${gameId}`, JSON.stringify(game));
         broadcastStart(sess.lobbyId, gameId);
+        broadcastGame(sess.lobbyId, game);
+        return;
+      }
+
+      if (msg.type === "joinGame") {
+        const { gameId, player } = msg;
+        const gameStr = await redis.get(`game:${gameId}`);
+        if (!gameStr) {
+          ws.send(JSON.stringify({ type: "error", error: "Game not found" }));
+          return;
+        }
+        const game = JSON.parse(gameStr);
+        // Associate this socket with the lobby room for realtime broadcasts
+        joinRoom(game.lobbyId, ws);
+        // Update session with lobby and player for permissions/orientation
+        const prev = sessions.get(ws) || {};
+        const playerId = player?.id || prev.playerId || "";
+        sessions.set(ws, { ...prev, lobbyId: game.lobbyId, playerId, gameId });
+        ws.send(JSON.stringify({ type: "game", game }));
+        return;
+      }
+
+      if (msg.type === "selectPiece") {
+        const { gameId, playerId, piece } = msg;
+        const gameStr = await redis.get(`game:${gameId}`);
+        if (!gameStr) return;
+        const game = JSON.parse(gameStr);
+        // Validate actor: must be HAND of current turn
+        const expectedId = game.turn === "WHITE" ? game.players.whiteHand : game.players.blackHand;
+        if (playerId !== expectedId) {
+          ws.send(JSON.stringify({ type: "error", error: "Not your turn (hand)" }));
+          return;
+        }
+        if (game.selectedPiece) {
+          ws.send(JSON.stringify({ type: "error", error: "Piece already selected" }));
+          return;
+        }
+        // piece must be one of KQRBNP
+        const validPieces = ["K", "Q", "R", "B", "N", "P"];
+        if (!validPieces.includes(piece)) {
+          ws.send(JSON.stringify({ type: "error", error: "Invalid piece" }));
+          return;
+        }
+        game.selectedPiece = piece;
+        await redis.set(`game:${gameId}`, JSON.stringify(game));
+        // broadcast selection
+        const lobId = game.lobbyId;
+        const payload = { type: "pieceSelected", gameId, piece, nextActor: getNextActor(game) };
+        const set = rooms.get(lobId);
+        if (set) {
+          for (const client of set) {
+            if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(payload));
+          }
+        }
+        return;
+      }
+
+      if (msg.type === "makeMove") {
+        const { gameId, playerId, from, to, promotion } = msg;
+        const gameStr = await redis.get(`game:${gameId}`);
+        if (!gameStr) return;
+        const game = JSON.parse(gameStr);
+        const brainId = game.turn === "WHITE" ? game.players.whiteBrain : game.players.blackBrain;
+        if (playerId !== brainId) {
+          ws.send(JSON.stringify({ type: "error", error: "Not your turn (brain)" }));
+          return;
+        }
+        if (!game.selectedPiece) {
+          ws.send(JSON.stringify({ type: "error", error: "Hand must select a piece first" }));
+          return;
+        }
+        // Validate move with chess.js and ensure moving piece matches selected type
+        const chess = new Chess(game.fen);
+        const pieceAtFrom = chess.get(from);
+        if (!pieceAtFrom) {
+          ws.send(JSON.stringify({ type: "error", error: "No piece at source" }));
+          return;
+        }
+        const expectedColor = game.turn === "WHITE" ? "w" : "b";
+        if (pieceAtFrom.color !== expectedColor) {
+          ws.send(JSON.stringify({ type: "error", error: "Wrong side piece" }));
+          return;
+        }
+        // pieceAtFrom.type is lowercase; map to uppercase
+        const typeUpper = pieceAtFrom.type.toUpperCase();
+        if (typeUpper !== game.selectedPiece) {
+          ws.send(JSON.stringify({ type: "error", error: "Must move selected piece type" }));
+          return;
+        }
+        const move = chess.move({ from, to, promotion });
+        if (!move) {
+          ws.send(JSON.stringify({ type: "error", error: "Illegal move" }));
+          return;
+        }
+        // Update game
+        game.fen = chess.fen();
+        game.moveNumber = game.moveNumber + 1;
+        game.turn = game.turn === "WHITE" ? "BLACK" : "WHITE";
+        game.selectedPiece = null;
+        game.status = chess.isGameOver() ? (chess.isCheckmate() ? (game.turn === "WHITE" ? "BLACK_WON" : "WHITE_WON") : "DRAW") : "ACTIVE";
+        game.moves = Array.isArray(game.moves) ? game.moves : [];
+        game.moves.push(move.san);
+        await redis.set(`game:${gameId}`, JSON.stringify(game));
+        broadcastGame(game.lobbyId, game);
         return;
       }
 
