@@ -5,6 +5,8 @@
  */
 const { WebSocketServer } = require("ws");
 const { createClient } = require("redis");
+const { createServer } = require("http");
+const { parse } = require("url");
 const path = require("path");
 const { Chess } = require("chess.js");
 
@@ -26,8 +28,7 @@ const PORT = process.env.PORT
   ? Number(process.env.PORT)
   : (process.env.WS_PORT ? Number(process.env.WS_PORT) : 4001);
 const HOST = process.env.NODE_ENV === "production" ? "0.0.0.0" : "localhost";
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(",") ||
-  ["http://localhost:3000"];
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(",") || ["http://localhost:3000"];
 
 const redis = createClient({ url: REDIS_URL });
 redis.on("error", (err) => console.error("Redis error", err));
@@ -60,12 +61,28 @@ function roleKeyFromSelection(sel) {
 (async () => {
   await redis.connect();
 
-  const wss = new WebSocketServer({ port: PORT, host: HOST });
-  console.log(`[ws] Listening on ws://${HOST}:${PORT}`);
-  console.log(`[ws] Env: ${process.env.NODE_ENV || "development"}`);
-  console.log(`[ws] Allowed origins: ${ALLOWED_ORIGINS.join(", ")}`);
+  // Single HTTP server: serves /health and upgrades WS on the same port
+  const httpServer = createServer((req, res) => {
+    const { pathname } = parse(req.url || "", true);
+    if (req.method === "GET" && pathname === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", timestamp: new Date().toISOString() }));
+      return;
+    }
+    // 404 for other HTTP paths
+    res.statusCode = 404;
+    res.end("Not Found");
+  });
 
-  // Map socket -> session { lobbyId, playerId }
+  const wss = new WebSocketServer({ server: httpServer });
+
+  httpServer.listen(PORT, HOST, () => {
+    console.log(`[ws] Listening on ws://${HOST}:${PORT}`);
+    console.log(`[ws] Env: ${process.env.NODE_ENV || "development"}`);
+    console.log(`[ws] Allowed origins: ${ALLOWED_ORIGINS.join(", ")}`);
+  });
+
+  // Map socket -\u003e session { lobbyId, playerId }
   const sessions = new Map();
   // Room map lobbyId -> Set of sockets
   const rooms = new Map();
@@ -514,10 +531,9 @@ function roleKeyFromSelection(sel) {
     try {
       console.log("[ws] Shutting down...");
       wss.clients.forEach((client) => {
-        try {
-          client.terminate();
-        } catch {}
+        try { client.terminate(); } catch {}
       });
+      await new Promise((resolve) => httpServer.close(resolve));
       await redis.quit();
       process.exit(0);
     } catch {
