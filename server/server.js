@@ -20,6 +20,11 @@ try {
 } catch {}
 
 const dev = process.env.NODE_ENV !== "production";
+const port = process.env.PORT ? Number(process.env.PORT) : 3000;
+const host = process.env.NODE_ENV === "production" ? "0.0.0.0" : "localhost";
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(",") ||
+  ["http://localhost:3000"];
+
 const nextApp = next({ dev });
 const handle = nextApp.getRequestHandler();
 
@@ -31,6 +36,34 @@ if (!REDIS_URL) {
 
 const redis = createClient({ url: REDIS_URL });
 redis.on("error", (err) => console.error("Redis error", err));
+
+// Graceful shutdown handler
+let server;
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received, starting graceful shutdown...");
+  if (server) {
+    server.close(() => {
+      console.log("HTTP server closed.");
+      redis.quit().then(() => {
+        console.log("Redis connection closed.");
+        process.exit(0);
+      });
+    });
+  }
+});
+
+process.on("SIGINT", () => {
+  console.log("SIGINT received, starting graceful shutdown...");
+  if (server) {
+    server.close(() => {
+      console.log("HTTP server closed.");
+      redis.quit().then(() => {
+        console.log("Redis connection closed.");
+        process.exit(0);
+      });
+    });
+  }
+});
 
 function now() {
   return Date.now();
@@ -55,7 +88,17 @@ function roleKeyFromSelection(sel) {
 nextApp.prepare().then(async () => {
   await redis.connect();
 
-  const server = createServer((req, res) => {
+  // Create bare server and attach a request listener to add a /health endpoint
+  server = createServer();
+
+  server.on("request", (req, res) => {
+    if (req.url === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({ status: "ok", timestamp: new Date().toISOString() }),
+      );
+      return;
+    }
     handle(req, res, parse(req.url || "", true));
   });
 
@@ -108,7 +151,39 @@ nextApp.prepare().then(async () => {
     return `${game.turn}_${phase}`; // e.g., WHITE_HAND
   }
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
+    // Check origin if specified
+    if (process.env.NODE_ENV === "production" && ALLOWED_ORIGINS.length > 0) {
+      const origin = req.headers.origin;
+      if (!origin || !ALLOWED_ORIGINS.includes(origin)) {
+        ws.close(1008, "Origin not allowed");
+        return;
+      }
+    }
+
+    // Set up ping/pong for keep-alive
+    let pingInterval;
+    const startPing = () => {
+      pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.ping();
+        }
+      }, 30000); // Ping every 30 seconds
+    };
+
+    ws.on("pong", () => {
+      // Client responded to ping, connection is alive
+    });
+
+    ws.on("ping", () => {
+      // Respond to client ping
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.pong();
+      }
+    });
+
+    startPing();
+
     ws.on("message", async (data) => {
       let msg;
       try {
@@ -117,7 +192,11 @@ nextApp.prepare().then(async () => {
         return;
       }
 
-      if (msg.event === "ping") return; // ignore sample pings
+      // Handle WebSocket ping messages
+      if (msg.type === "ping" || msg.event === "ping") {
+        ws.send(JSON.stringify({ type: "pong" }));
+        return;
+      }
 
       if (msg.type === "join") {
         const { lobbyId, player } = msg;
@@ -432,10 +511,13 @@ nextApp.prepare().then(async () => {
         } else if (chess.isDraw()) {
           status = "DRAW";
           result = "1/2-1/2";
-          if (chess.isThreefoldRepetition()) resultReason = "Threefold repetition";
-          else if (chess.isInsufficientMaterial()) resultReason = "Insufficient material";
-          else if (chess.isDrawByFiftyMoves()) resultReason = "Fifty-move rule";
-          else resultReason = "Draw";
+          if (chess.isThreefoldRepetition()) {
+            resultReason = "Threefold repetition";
+          } else if (chess.isInsufficientMaterial()) {
+            resultReason = "Insufficient material";
+          } else if (chess.isDrawByFiftyMoves()) {
+            resultReason = "Fifty-move rule";
+          } else resultReason = "Draw";
         } else {
           // game continues: toggle turn
           game.turn = game.turn === "WHITE" ? "BLACK" : "WHITE";
@@ -463,6 +545,11 @@ nextApp.prepare().then(async () => {
     });
 
     ws.on("close", async () => {
+      // Clear ping interval
+      if (pingInterval) {
+        clearInterval(pingInterval);
+      }
+
       const sess = sessions.get(ws);
       if (!sess) return;
       sessions.delete(ws);
@@ -479,6 +566,14 @@ nextApp.prepare().then(async () => {
       if (lob.lastSeen) delete lob.lastSeen[sess.playerId];
       await setLobby(lob);
       broadcastLobby(sess.lobbyId, lob);
+    });
+
+    ws.on("error", (error) => {
+      console.error("WebSocket error:", error);
+      // Clear ping interval
+      if (pingInterval) {
+        clearInterval(pingInterval);
+      }
     });
   });
 
@@ -500,8 +595,9 @@ nextApp.prepare().then(async () => {
     socket.destroy();
   });
 
-  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
-  server.listen(port, () => {
-    console.log(`Server listening on http://localhost:${port}`);
+  server.listen(port, host, () => {
+    console.log(`Server listening on http://${host}:${port}`);
+    console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+    console.log(`Allowed origins: ${(ALLOWED_ORIGINS || []).join(", ")}`);
   });
 });

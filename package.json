@@ -6,6 +6,7 @@
     "dev": "node server/server.js",
     "build": "next build",
     "start": "next start",
+    "start:ws": "node server/ws-server.js",
     "lint": "next lint",
     "ws": "node server/ws-server.js"
   },

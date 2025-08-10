@@ -22,7 +22,12 @@ if (!REDIS_URL) {
   process.exit(1);
 }
 
-const PORT = process.env.WS_PORT ? Number(process.env.WS_PORT) : 4001;
+const PORT = process.env.PORT
+  ? Number(process.env.PORT)
+  : (process.env.WS_PORT ? Number(process.env.WS_PORT) : 4001);
+const HOST = process.env.NODE_ENV === "production" ? "0.0.0.0" : "localhost";
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(",") ||
+  ["http://localhost:3000"];
 
 const redis = createClient({ url: REDIS_URL });
 redis.on("error", (err) => console.error("Redis error", err));
@@ -55,8 +60,10 @@ function roleKeyFromSelection(sel) {
 (async () => {
   await redis.connect();
 
-  const wss = new WebSocketServer({ port: PORT });
-  console.log(`[ws] Listening on ws://localhost:${PORT}`);
+  const wss = new WebSocketServer({ port: PORT, host: HOST });
+  console.log(`[ws] Listening on ws://${HOST}:${PORT}`);
+  console.log(`[ws] Env: ${process.env.NODE_ENV || "development"}`);
+  console.log(`[ws] Allowed origins: ${ALLOWED_ORIGINS.join(", ")}`);
 
   // Map socket -> session { lobbyId, playerId }
   const sessions = new Map();
@@ -103,12 +110,40 @@ function roleKeyFromSelection(sel) {
     return `${game.turn}_${phase}`;
   }
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
+    // Origin check in production
+    if (process.env.NODE_ENV === "production" && ALLOWED_ORIGINS.length > 0) {
+      const origin = req.headers.origin;
+      if (!origin || !ALLOWED_ORIGINS.includes(origin)) {
+        ws.close(1008, "Origin not allowed");
+        return;
+      }
+    }
+
+    // Keepalive ping/pong
+    let pingInterval;
+    const startPing = () => {
+      pingInterval = setInterval(() => {
+        if (ws.readyState === 1) ws.ping();
+      }, 30000);
+    };
+    ws.on("pong", () => {});
+    ws.on("ping", () => {
+      if (ws.readyState === 1) ws.pong();
+    });
+    startPing();
+
     ws.on("message", async (data) => {
       let msg;
       try {
         msg = JSON.parse(String(data));
       } catch {
+        return;
+      }
+
+      // Respond to explicit ping messages from clients
+      if (msg.type === "ping" || msg.event === "ping") {
+        ws.send(JSON.stringify({ type: "pong" }));
         return;
       }
 
@@ -420,10 +455,13 @@ function roleKeyFromSelection(sel) {
         } else if (chess.isDraw()) {
           status = "DRAW";
           result = "1/2-1/2";
-          if (chess.isThreefoldRepetition()) resultReason = "Threefold repetition";
-          else if (chess.isInsufficientMaterial()) resultReason = "Insufficient material";
-          else if (chess.isDrawByFiftyMoves()) resultReason = "Fifty-move rule";
-          else resultReason = "Draw";
+          if (chess.isThreefoldRepetition()) {
+            resultReason = "Threefold repetition";
+          } else if (chess.isInsufficientMaterial()) {
+            resultReason = "Insufficient material";
+          } else if (chess.isDrawByFiftyMoves()) {
+            resultReason = "Fifty-move rule";
+          } else resultReason = "Draw";
         } else {
           // game continues: toggle turn
           game.turn = game.turn === "WHITE" ? "BLACK" : "WHITE";
@@ -451,6 +489,7 @@ function roleKeyFromSelection(sel) {
     });
 
     ws.on("close", async () => {
+      if (pingInterval) clearInterval(pingInterval);
       const sess = sessions.get(ws);
       if (!sess) return;
       sessions.delete(ws);
@@ -469,4 +508,22 @@ function roleKeyFromSelection(sel) {
       broadcastLobby(sess.lobbyId, lob);
     });
   });
+
+  // Graceful shutdown
+  const shutdown = async () => {
+    try {
+      console.log("[ws] Shutting down...");
+      wss.clients.forEach((client) => {
+        try {
+          client.terminate();
+        } catch {}
+      });
+      await redis.quit();
+      process.exit(0);
+    } catch {
+      process.exit(1);
+    }
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 })();
